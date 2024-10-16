@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/gregjones/httpcache/diskcache"
 	"github.com/labstack/echo"
 	"willnorris.com/go/imageproxy"
 )
@@ -19,7 +20,8 @@ func main() {
 
 	e := echo.New()
 
-	p := imageproxy.NewProxy(nil, nil)
+	diskCache := diskcache.New("/tmp/hyperproxy")
+	p := imageproxy.NewProxy(nil, diskCache)
 
 	e.GET("/image/*", func(c echo.Context) error {
 		c.Request().URL.Path = "/" + c.Param("*")
