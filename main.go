@@ -30,5 +30,10 @@ func main() {
 
 	e.GET("/summary", SummaryHandler)
 
-	e.Logger.Fatal(e.Start(":8082"))
+	PORT := os.Getenv("PORT")
+	if PORT == "" {
+		PORT = "8080"
+	}
+
+	e.Logger.Fatal(e.Start(":" + PORT))
 }
