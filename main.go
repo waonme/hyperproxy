@@ -1,11 +1,22 @@
 package main
 
 import (
+	"os"
+
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/labstack/echo"
 	"willnorris.com/go/imageproxy"
 )
 
+var (
+	mc *memcache.Client
+)
+
 func main() {
+
+	mc = memcache.New(os.Getenv("MEMCACHED_HOST"))
+	defer mc.Close()
+
 	e := echo.New()
 
 	p := imageproxy.NewProxy(nil, nil)

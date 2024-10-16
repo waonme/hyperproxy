@@ -3,6 +3,7 @@ module github.com/concrnt/hyperproxy
 go 1.22.5
 
 require (
+	github.com/bradfitz/gomemcache v0.0.0-20230905024940-24af94b03874
 	github.com/labstack/echo v3.3.10+incompatible
 	golang.org/x/net v0.30.0
 	willnorris.com/go/imageproxy v0.11.2
@@ -10,7 +11,7 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.1.1 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/fcjr/aia-transport-go v1.2.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/labstack/echo"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -28,6 +31,14 @@ type Link struct {
 func SummaryHandler(c echo.Context) error {
 
 	url := c.QueryParam("url")
+	cacheKey := "hyperproxy:summary:" + url
+
+	cache, err := mc.Get(cacheKey)
+	if err == nil {
+		summary := Summary{}
+		json.Unmarshal(cache.Value, &summary)
+		return c.JSON(http.StatusOK, summary)
+	}
 
 	useragent := "hyperproxy summery bot"
 
@@ -121,6 +132,17 @@ END_ANALYSIS:
 		summary.Title = title
 	}
 
+	go func() {
+		summaryJson, _ := json.Marshal(summary)
+		err := mc.Set(&memcache.Item{
+			Key:        cacheKey,
+			Value:      summaryJson,
+			Expiration: 60 * 60 * 24, // 1 day
+		})
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
+
 	return c.JSON(http.StatusOK, summary)
 }
-
