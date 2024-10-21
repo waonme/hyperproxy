@@ -22,6 +22,7 @@ func main() {
 
 	diskCache := diskcache.New("/tmp/hyperproxy")
 	p := imageproxy.NewProxy(nil, diskCache)
+	p.FollowRedirects = true
 
 	e.GET("/image/*", func(c echo.Context) error {
 		c.Request().URL.Path = "/" + c.Param("*")
