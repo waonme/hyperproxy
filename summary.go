@@ -94,7 +94,6 @@ func SummaryHandler(c echo.Context) error {
 					twitter_card = meta.Content
 				} else if meta.Name == "content-type" {
 					contentType = meta.Content
-
 				}
 
 			} else if atom.Lookup(name) == atom.Link {
@@ -134,7 +133,8 @@ END_ANALYSIS:
 
 	split := strings.Split(contentType, ";")
 	if len(split) > 1 {
-		prop := strings.Split(split[1], "=")
+		value := strings.ReplaceAll(split[1], " ", "")
+		prop := strings.Split(value, "=")
 		if len(prop) == 2 {
 			if prop[0] == "charset" {
 				charset = prop[1]
