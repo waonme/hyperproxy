@@ -6,6 +6,7 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/gregjones/httpcache/diskcache"
 	"github.com/labstack/echo"
+	"github.com/labstack/echo/middleware"
 	"willnorris.com/go/imageproxy"
 )
 
@@ -19,6 +20,7 @@ func main() {
 	defer mc.Close()
 
 	e := echo.New()
+	e.Use(middleware.Recover())
 
 	diskCache := diskcache.New("/tmp/hyperproxy")
 	p := imageproxy.NewProxy(nil, diskCache)

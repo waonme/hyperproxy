@@ -7,12 +7,14 @@ require (
 	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79
 	github.com/labstack/echo v3.3.10+incompatible
 	golang.org/x/net v0.30.0
+	golang.org/x/text v0.19.0
 	willnorris.com/go/imageproxy v0.11.2
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/fcjr/aia-transport-go v1.2.2 // indirect
 	github.com/google/btree v1.1.2 // indirect
@@ -33,7 +35,6 @@ require (
 	golang.org/x/crypto v0.28.0 // indirect
 	golang.org/x/image v0.16.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect
-	golang.org/x/text v0.19.0 // indirect
 	google.golang.org/protobuf v1.34.1 // indirect
 	willnorris.com/go/gifresize v1.0.0 // indirect
 )

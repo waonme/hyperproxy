@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -36,8 +37,12 @@ type Link struct {
 
 func SummaryHandler(c echo.Context) error {
 
-	url := c.QueryParam("url")
-	cacheKey := "hyperproxy:summary:" + url
+	queryUrl := c.QueryParam("url")
+	parsedUrl, err := url.Parse(queryUrl)
+	if err != nil {
+		return c.String(http.StatusBadRequest, "Invalid URL")
+	}
+	cacheKey := "hyperproxy:summary:" + queryUrl
 
 	cache, err := mc.Get(cacheKey)
 	if err == nil {
@@ -49,9 +54,31 @@ func SummaryHandler(c echo.Context) error {
 	useragent := "hyperproxy summery bot"
 
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", queryUrl, nil)
+	if err != nil {
+		return c.String(http.StatusBadRequest, "Invalid URL")
+	}
 	req.Header.Set("User-Agent", useragent)
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println(err)
+
+		erroredSummary := Summary{
+			Title:       parsedUrl.Host,
+			Icon:        "",
+			Description: "Could not fetch the page",
+			Thumbnail:   "",
+		}
+
+		summaryJson, _ := json.Marshal(erroredSummary)
+		mc.Set(&memcache.Item{
+			Key:        cacheKey,
+			Value:      summaryJson,
+			Expiration: 60 * 10, // 10 minutes
+		})
+
+		return c.JSON(http.StatusOK, erroredSummary)
+	}
 
 	favicon := ""
 	title := ""
