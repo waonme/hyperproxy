@@ -207,6 +207,26 @@ END_ANALYSIS:
 		}
 	}
 
+	if summary.Icon != "" {
+		iconURL, err := url.Parse(summary.Icon)
+		if err == nil {
+			if !iconURL.IsAbs() {
+				iconURL = parsedUrl.ResolveReference(iconURL)
+				summary.Icon = iconURL.String()
+			}
+		}
+	}
+
+	if summary.Thumbnail != "" {
+		thumbnailURL, err := url.Parse(summary.Thumbnail)
+		if err == nil {
+			if !thumbnailURL.IsAbs() {
+				thumbnailURL = parsedUrl.ResolveReference(thumbnailURL)
+				summary.Thumbnail = thumbnailURL.String()
+			}
+		}
+	}
+
 SKIP_TRANSFORM:
 
 	go func() {
