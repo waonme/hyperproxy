@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/labstack/echo"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 )
 
 type Summary struct {
@@ -52,6 +58,8 @@ func SummaryHandler(c echo.Context) error {
 	summary := Summary{}
 	twitter_card := "summary"
 
+	contentType := resp.Header.Get("Content-Type")
+
 	z := html.NewTokenizer(resp.Body)
 	for {
 		tt := z.Next()
@@ -65,7 +73,7 @@ func SummaryHandler(c echo.Context) error {
 				for hasAttr {
 					key, val, more := z.TagAttr()
 
-					if string(key) == "name" || string(key) == "property" {
+					if string(key) == "name" || string(key) == "property" || string(key) == "http-equiv" {
 						meta.Name = string(val)
 					} else if string(key) == "content" {
 						meta.Content = string(val)
@@ -84,6 +92,9 @@ func SummaryHandler(c echo.Context) error {
 					summary.Thumbnail = meta.Content
 				} else if meta.Name == "twitter:card" {
 					twitter_card = meta.Content
+				} else if meta.Name == "content-type" {
+					contentType = meta.Content
+
 				}
 
 			} else if atom.Lookup(name) == atom.Link {
@@ -119,6 +130,18 @@ func SummaryHandler(c echo.Context) error {
 
 END_ANALYSIS:
 
+	charset := ""
+
+	split := strings.Split(contentType, ";")
+	if len(split) > 1 {
+		prop := strings.Split(split[1], "=")
+		if len(prop) == 2 {
+			if prop[0] == "charset" {
+				charset = prop[1]
+			}
+		}
+	}
+
 	if twitter_card != "summary_large_image" {
 		summary.Icon = summary.Thumbnail
 		summary.Thumbnail = ""
@@ -131,6 +154,33 @@ END_ANALYSIS:
 	if summary.Title == "" {
 		summary.Title = title
 	}
+
+	if charset != "" {
+		charset = strings.ToLower(charset)
+		encodemap := map[string]encoding.Encoding{
+			"utf-8":     encoding.Nop,
+			"shift_jis": japanese.ShiftJIS,
+			"euc-jp":    japanese.EUCJP,
+		}
+
+		encoder, ok := encodemap[charset]
+		if !ok {
+			fmt.Println("charset not supported: ", charset)
+			goto SKIP_TRANSFORM
+		}
+
+		newtitle, err := io.ReadAll(transform.NewReader(bytes.NewReader([]byte(summary.Title)), encoder.NewDecoder()))
+		if err == nil {
+			summary.Title = string(newtitle)
+		}
+
+		newdescription, err := io.ReadAll(transform.NewReader(bytes.NewReader([]byte(summary.Description)), encoder.NewDecoder()))
+		if err == nil {
+			summary.Description = string(newdescription)
+		}
+	}
+
+SKIP_TRANSFORM:
 
 	go func() {
 		summaryJson, _ := json.Marshal(summary)
