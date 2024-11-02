@@ -37,6 +37,10 @@ type Link struct {
 
 func SummaryHandler(c echo.Context) error {
 
+	// setup cors
+	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	c.Response().Header().Set("Access-Control-Allow-Methods", "GET")
+
 	queryUrl := c.QueryParam("url")
 	parsedUrl, err := url.Parse(queryUrl)
 	if err != nil {
