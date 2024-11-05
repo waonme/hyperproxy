@@ -115,15 +115,17 @@ func SummaryHandler(c echo.Context) error {
 					}
 				}
 
-				if meta.Name == "og:title" {
+				name := strings.ToLower(meta.Name)
+
+				if name == "og:title" {
 					summary.Title = meta.Content
-				} else if meta.Name == "og:description" {
+				} else if name == "og:description" {
 					summary.Description = meta.Content
-				} else if meta.Name == "og:image" {
+				} else if name == "og:image" {
 					summary.Thumbnail = meta.Content
-				} else if meta.Name == "twitter:card" {
+				} else if name == "twitter:card" {
 					twitter_card = meta.Content
-				} else if meta.Name == "content-type" {
+				} else if name == "content-type" {
 					contentType = meta.Content
 				}
 
@@ -191,6 +193,7 @@ END_ANALYSIS:
 		encodemap := map[string]encoding.Encoding{
 			"utf-8":     encoding.Nop,
 			"shift_jis": japanese.ShiftJIS,
+			"x-sjis":    japanese.ShiftJIS,
 			"euc-jp":    japanese.EUCJP,
 		}
 
