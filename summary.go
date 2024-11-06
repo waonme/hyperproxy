@@ -84,6 +84,8 @@ func SummaryHandler(c echo.Context) error {
 		return c.JSON(http.StatusOK, erroredSummary)
 	}
 
+	charset := ""
+
 	favicon := ""
 	title := ""
 	summary := Summary{}
@@ -108,6 +110,8 @@ func SummaryHandler(c echo.Context) error {
 						meta.Name = string(val)
 					} else if string(key) == "content" {
 						meta.Content = string(val)
+					} else if string(key) == "charset" {
+						charset = string(val)
 					}
 
 					if !more {
@@ -161,8 +165,6 @@ func SummaryHandler(c echo.Context) error {
 	}
 
 END_ANALYSIS:
-
-	charset := ""
 
 	split := strings.Split(contentType, ";")
 	if len(split) > 1 {
