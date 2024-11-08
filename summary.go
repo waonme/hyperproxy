@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,6 +36,33 @@ type Link struct {
 	Href string `json:"href"`
 }
 
+func invalidURL(c echo.Context, host, key string) error {
+	erroredSummary := Summary{
+		Title:       host,
+		Icon:        "",
+		Description: "Could not fetch the page",
+		Thumbnail:   "",
+	}
+
+	summaryJson, _ := json.Marshal(erroredSummary)
+	mc.Set(&memcache.Item{
+		Key:        key,
+		Value:      summaryJson,
+		Expiration: 60 * 10, // 10 minutes
+	})
+
+	return c.JSON(http.StatusOK, erroredSummary)
+}
+
+var denyIps = []string{
+	"127.0.0.0/8",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"::1/128",
+	"fc00::/7",
+}
+
 func SummaryHandler(c echo.Context) error {
 
 	// setup cors
@@ -42,10 +70,6 @@ func SummaryHandler(c echo.Context) error {
 	c.Response().Header().Set("Access-Control-Allow-Methods", "GET")
 
 	queryUrl := c.QueryParam("url")
-	parsedUrl, err := url.Parse(queryUrl)
-	if err != nil {
-		return c.String(http.StatusBadRequest, "Invalid URL")
-	}
 	cacheKey := "hyperproxy:summary:" + queryUrl
 
 	cache, err := mc.Get(cacheKey)
@@ -53,6 +77,33 @@ func SummaryHandler(c echo.Context) error {
 		summary := Summary{}
 		json.Unmarshal(cache.Value, &summary)
 		return c.JSON(http.StatusOK, summary)
+	}
+
+	parsedUrl, err := url.Parse(queryUrl)
+	if err != nil {
+		fmt.Println("Error parsing URL: ", err)
+		return invalidURL(c, "Invalid URL", cacheKey)
+	}
+
+	targetIPs, err := net.LookupIP(parsedUrl.Host)
+	if err != nil {
+		fmt.Println("Error looking up IP: ", err)
+		return invalidURL(c, parsedUrl.Host, cacheKey)
+	}
+
+	for _, denyIP := range denyIps {
+		_, ipnet, err := net.ParseCIDR(denyIP)
+		if err != nil {
+			fmt.Println("Error parsing CIDR: ", err)
+			continue
+		}
+
+		for _, targetIP := range targetIPs {
+			if ipnet.Contains(targetIP) {
+				fmt.Println("IP is in deny list: ", targetIP)
+				return invalidURL(c, parsedUrl.Host, cacheKey)
+			}
+		}
 	}
 
 	useragent := "hyperproxy summery bot"
@@ -65,23 +116,8 @@ func SummaryHandler(c echo.Context) error {
 	req.Header.Set("User-Agent", useragent)
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
-
-		erroredSummary := Summary{
-			Title:       parsedUrl.Host,
-			Icon:        "",
-			Description: "Could not fetch the page",
-			Thumbnail:   "",
-		}
-
-		summaryJson, _ := json.Marshal(erroredSummary)
-		mc.Set(&memcache.Item{
-			Key:        cacheKey,
-			Value:      summaryJson,
-			Expiration: 60 * 10, // 10 minutes
-		})
-
-		return c.JSON(http.StatusOK, erroredSummary)
+		fmt.Println("Error fetching URL: ", err)
+		return invalidURL(c, parsedUrl.Host, cacheKey)
 	}
 
 	charset := ""
