@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/labstack/echo"
+	"github.com/labstack/echo/v4"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 	"golang.org/x/text/encoding"
@@ -52,15 +52,6 @@ func invalidURL(c echo.Context, host, key string) error {
 	})
 
 	return c.JSON(http.StatusOK, erroredSummary)
-}
-
-var denyIps = []string{
-	"127.0.0.0/8",
-	"10.0.0.0/8",
-	"172.16.0.0/12",
-	"192.168.0.0/16",
-	"::1/128",
-	"fc00::/7",
 }
 
 func SummaryHandler(c echo.Context) error {
@@ -106,9 +97,6 @@ func SummaryHandler(c echo.Context) error {
 		}
 	}
 
-	useragent := "hyperproxy summery bot"
-
-	client := &http.Client{}
 	req, err := http.NewRequest("GET", queryUrl, nil)
 	if err != nil {
 		return c.String(http.StatusBadRequest, "Invalid URL")
