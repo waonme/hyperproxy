@@ -35,12 +35,12 @@ const (
 	MaxCacheSize = 1024 * 1024 * 1024 // 1GB
 )
 
-func CleanDiskCache() {
+func CleanDiskCache() int64 {
 
 	entries, err := os.ReadDir(CachePath)
 	if err != nil {
 		fmt.Println(err)
-		return
+		return -1
 	}
 
 	files := make([]os.FileInfo, 0)
@@ -62,7 +62,7 @@ func CleanDiskCache() {
 	}
 
 	if totalSize < MaxCacheSize {
-		return
+		return totalSize
 	}
 
 	sort.Slice(files, func(i, j int) bool {
@@ -82,6 +82,8 @@ func CleanDiskCache() {
 		fmt.Println("Evicted: ", filePath)
 		totalSize -= file.Size()
 	}
+
+	return totalSize
 }
 
 func ImageHandler(c echo.Context) error {
@@ -94,6 +96,7 @@ func ImageHandler(c echo.Context) error {
 	cachePath := filepath.Join(CachePath, cacheKey)
 
 	if _, err := os.Stat(cachePath); err == nil {
+		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
 		return c.File(cachePath)
 	}
 
@@ -180,7 +183,6 @@ func ImageHandler(c echo.Context) error {
 		req.Header.Set("User-Agent", useragent)
 		resp, err := client.Do(req)
 
-		//resp, err := http.Get(remoteURL)
 		if err != nil {
 			return c.String(500, "Internal Server Error")
 		}
@@ -232,6 +234,7 @@ func ImageHandler(c echo.Context) error {
 
 		_, err = io.Copy(cacheFile, reader)
 
+		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
 		return c.File(originalCachePath)
 	}
 
@@ -283,5 +286,6 @@ func ImageHandler(c echo.Context) error {
 	}
 
 	// return the image
+	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
 	return c.Stream(200, "image/webp", &buff)
 }

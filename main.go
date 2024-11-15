@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/labstack/echo-contrib/echoprometheus"
 	"github.com/labstack/echo-contrib/pprof"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var denyIps = []string{
@@ -23,7 +25,9 @@ var denyIps = []string{
 
 var (
 	mc     *memcache.Client
-	client = &http.Client{}
+	client = &http.Client{
+		Timeout: 10 * time.Second,
+	}
 )
 
 const (
@@ -39,18 +43,42 @@ func main() {
 	pprof.Register(e)
 	e.Use(middleware.Recover())
 
+	e.Use(echoprometheus.NewMiddlewareWithConfig(echoprometheus.MiddlewareConfig{
+		Namespace: "hyperproxy",
+		LabelFuncs: map[string]echoprometheus.LabelValueFunc{
+			"url": func(c echo.Context, err error) string {
+				return "REDACTED"
+			},
+		},
+		Skipper: func(c echo.Context) bool {
+			return c.Path() == "/metrics" || c.Path() == "/health"
+		},
+	}))
+
 	e.GET("/image/*", ImageHandler)
 	e.GET("/summary", SummaryHandler)
 
+	var currentCacheSizeMetrics = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hyperproxy_image_cache_size",
+		Help: "Current size of the image cache",
+	})
+	prometheus.MustRegister(currentCacheSizeMetrics)
+
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		totalsize := CleanDiskCache()
+		currentCacheSizeMetrics.Set(float64(totalsize))
+
+		ticker := time.NewTicker(5 * time.Minute)
 		for {
 			select {
 			case <-ticker.C:
-				CleanDiskCache()
+				totalsize := CleanDiskCache()
+				currentCacheSizeMetrics.Set(float64(totalsize))
 			}
 		}
 	}()
+
+	e.GET("/metrics", echoprometheus.NewHandler())
 
 	PORT := os.Getenv("PORT")
 	if PORT == "" {
