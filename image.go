@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -107,16 +109,6 @@ func ImageHandler(c echo.Context) error {
 
 	subpath := c.Param("*")
 
-	cacheKeyBytes := sha256.Sum256([]byte(subpath))
-	cacheKey := hex.EncodeToString(cacheKeyBytes[:])
-
-	cachePath := filepath.Join(CachePath, cacheKey)
-
-	if _, err := os.Stat(cachePath); err == nil {
-		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
-		return c.File(cachePath)
-	}
-
 	splitter := strings.Index(subpath, "/")
 	if splitter == -1 {
 		err := errors.New("Failed to split the path")
@@ -160,21 +152,40 @@ func ImageHandler(c echo.Context) error {
 	remoteURL := subpath[splitter+1:]
 	remoteURL = reCleanedURL.ReplaceAllString(remoteURL, "$1://$2")
 	span.SetAttributes(attribute.String("remoteURL", remoteURL))
-	originalCacheKeyBytes := sha256.Sum256([]byte(remoteURL))
-	originalCacheKey := hex.EncodeToString(originalCacheKeyBytes[:])
-	originalCachePath := filepath.Join(CachePath, originalCacheKey)
+
+	requestCacheKeyBytes := sha256.Sum256([]byte(remoteURL))
+	requestCacheKey := hex.EncodeToString(requestCacheKeyBytes[:])
+	requestCachePath := filepath.Join(CachePath, requestCacheKey)
 
 	var reader io.Reader
+	var contentType string
 
 	// Check if the original image is already cached
-	if _, err := os.Stat(originalCachePath); err == nil {
-		reader, err = os.Open(originalCachePath)
+	if _, err := os.Stat(requestCachePath); err == nil {
+
+		fmt.Println("Cache hit: ", requestCachePath)
+
+		cache, err := os.Open(requestCachePath)
 		if err != nil {
 			err := errors.Wrap(err, "Failed to open original cache")
 			span.RecordError(err)
 			return c.String(500, err.Error())
 		}
+
+		req := &http.Request{}
+		resp, err := http.ReadResponse(bufio.NewReader(cache), req)
+		if err != nil {
+			err := errors.Wrap(err, "Failed to read response")
+			span.RecordError(err)
+			return c.String(500, err.Error())
+		}
+
+		reader = resp.Body
+		contentType = resp.Header.Get("Content-Type")
+
 	} else {
+
+		fmt.Println("Cache miss: ", requestCachePath)
 
 		parsedUrl, err := url.Parse(remoteURL)
 		if err != nil {
@@ -232,6 +243,18 @@ func ImageHandler(c echo.Context) error {
 		}
 		defer resp.Body.Close()
 
+		buf, err := io.ReadAll(resp.Body)
+		if err != nil {
+			err := errors.Wrap(err, "Failed to read response")
+			span.RecordError(err)
+			return c.String(500, err.Error())
+		}
+
+		resp.Body = io.NopCloser(bytes.NewReader(buf))
+		reader = bytes.NewReader(buf)
+
+		contentType = resp.Header.Get("Content-Type")
+
 		fetchSpan.End()
 
 		if resp.StatusCode != 200 {
@@ -255,44 +278,31 @@ func ImageHandler(c echo.Context) error {
 			return c.String(500, err.Error())
 		}
 
-		cacheFile, err := os.Create(originalCachePath)
+		b, err := httputil.DumpResponse(resp, true)
 		if err != nil {
-			err := errors.Wrap(err, "Failed to create cache file")
+			err := errors.Wrap(err, "Failed to dump response")
 			span.RecordError(err)
 			return c.String(500, err.Error())
 		}
-		defer cacheFile.Close()
 
-		teeReader := io.TeeReader(resp.Body, cacheFile)
-
-		reader = teeReader
+		err = os.WriteFile(requestCachePath, b, 0644)
+		if err != nil {
+			err := errors.Wrap(err, "Failed to write cache file")
+			span.RecordError(err)
+			return c.String(500, err.Error())
+		}
 	}
 
 	// load image
-	img, format, err := image.Decode(reader)
+	_, loadSpan := tracer.Start(ctx, "LoadImage")
+	buf := new(bytes.Buffer)
+	tee := io.TeeReader(reader, buf)
+	img, format, err := image.Decode(tee)
 	if err != nil || format == "gif" {
-		// fallback to original image
-
-		err = os.MkdirAll(CachePath, 0755)
-		if err != nil {
-			err := errors.Wrap(err, "Failed to create cache directory")
-			span.RecordError(err)
-			return c.String(500, err.Error())
-		}
-
-		cacheFile, err := os.Create(cachePath)
-		if err != nil {
-			err := errors.Wrap(err, "Failed to create cache file")
-			span.RecordError(err)
-			return c.String(500, err.Error())
-		}
-		defer cacheFile.Close()
-
-		_, err = io.Copy(cacheFile, reader)
-
 		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
-		return c.File(originalCachePath)
+		return c.Stream(200, contentType, buf)
 	}
+	loadSpan.End()
 
 	originalWidth := img.Bounds().Dx()
 	originalHeight := img.Bounds().Dy()
@@ -320,6 +330,7 @@ func ImageHandler(c echo.Context) error {
 		resizeHeight = originalHeight
 	}
 
+	// resize image
 	_, resizeSpan := tracer.Start(ctx, "ResizeImage")
 
 	dst := image.NewRGBA(image.Rect(0, 0, resizeWidth, resizeHeight))
@@ -328,6 +339,7 @@ func ImageHandler(c echo.Context) error {
 	resizeSpan.End()
 
 	// encode image
+	_, encodeSpan := tracer.Start(ctx, "EncodeImage")
 	var buff bytes.Buffer
 	err = webp.Encode(&buff, dst, &webp.Options{Quality: 80})
 	if err != nil {
@@ -335,21 +347,7 @@ func ImageHandler(c echo.Context) error {
 		span.RecordError(err)
 		return c.String(500, err.Error())
 	}
-
-	// save the image to cache
-	err = os.MkdirAll(CachePath, 0755)
-	if err != nil {
-		err := errors.Wrap(err, "Failed to create cache directory")
-		span.RecordError(err)
-		return c.String(500, err.Error())
-	}
-
-	err = os.WriteFile(cachePath, buff.Bytes(), 0644)
-	if err != nil {
-		err := errors.Wrap(err, "Failed to write cache file")
-		span.RecordError(err)
-		return c.String(500, err.Error())
-	}
+	encodeSpan.End()
 
 	// return the image
 	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
