@@ -299,7 +299,7 @@ func ImageHandler(c echo.Context) error {
 	tee := io.TeeReader(reader, buf)
 	img, format, err := image.Decode(tee)
 	if err != nil || format == "gif" {
-		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
+		c.Response().Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400, immutable")
 		return c.Stream(200, contentType, io.MultiReader(buf, reader))
 	}
 	loadSpan.End()
@@ -374,6 +374,6 @@ func ImageHandler(c echo.Context) error {
 	encodeSpan.End()
 
 	// return the image
-	c.Response().Header().Set("Cache-Control", "public, max-age=86400")
+	c.Response().Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400, immutable")
 	return c.Stream(200, "image/webp", &buff)
 }
