@@ -18,19 +18,19 @@ import (
 	"strconv"
 	"strings"
 
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 
-	"go.opentelemetry.io/otel/attribute"
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/tiff"
-
 	"github.com/chai2010/webp"
+	"github.com/disintegration/imaging"
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
-	"golang.org/x/image/draw"
+	"github.com/rwcarlsen/goexif/exif"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -163,7 +163,7 @@ func ImageHandler(c echo.Context) error {
 	// Check if the original image is already cached
 	if _, err := os.Stat(requestCachePath); err == nil {
 
-		fmt.Println("Cache hit: ", requestCachePath)
+		fmt.Println("Cache hit: ", remoteURL)
 
 		cache, err := os.Open(requestCachePath)
 		if err != nil {
@@ -185,7 +185,7 @@ func ImageHandler(c echo.Context) error {
 
 	} else {
 
-		fmt.Println("Cache miss: ", requestCachePath)
+		fmt.Println("Cache miss: ", remoteURL)
 
 		parsedUrl, err := url.Parse(remoteURL)
 		if err != nil {
@@ -304,23 +304,29 @@ func ImageHandler(c echo.Context) error {
 	}
 	loadSpan.End()
 
+	orientation := 1
+	if format == "jpeg" {
+		exifData, err := exif.Decode(buf)
+		if err == nil {
+			exifOrient, err := exifData.Get(exif.Orientation)
+			if err == nil {
+				orientation, err = exifOrient.Int(0)
+				if err != nil {
+					fmt.Println("Error parsing orientation: ", err)
+				}
+			}
+		}
+	}
+
 	originalWidth := img.Bounds().Dx()
 	originalHeight := img.Bounds().Dy()
 
-	resizeWidth := originalWidth
-	resizeHeight := originalHeight
-
-	// resize image
-	if width != 0 && height != 0 {
-		resizeWidth = width
-		resizeHeight = height
-	} else if width != 0 {
-		resizeWidth = width
-		resizeHeight = int(float64(width) / float64(originalWidth) * float64(originalHeight))
-	} else if height != 0 {
-		resizeHeight = height
-		resizeWidth = int(float64(height) / float64(originalHeight) * float64(originalWidth))
+	if orientation >= 5 {
+		originalWidth, originalHeight = originalHeight, originalWidth
 	}
+
+	resizeWidth := width
+	resizeHeight := height
 
 	if resizeWidth > originalWidth {
 		resizeWidth = originalWidth
@@ -333,15 +339,33 @@ func ImageHandler(c echo.Context) error {
 	// resize image
 	_, resizeSpan := tracer.Start(ctx, "ResizeImage")
 
-	dst := image.NewRGBA(image.Rect(0, 0, resizeWidth, resizeHeight))
-	draw.NearestNeighbor.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
+	switch orientation {
+	case 2:
+		img = imaging.FlipH(img)
+	case 3:
+		img = imaging.Rotate180(img)
+	case 4:
+		img = imaging.FlipV(img)
+	case 5:
+		img = imaging.Transpose(img)
+	case 6:
+		img = imaging.Rotate270(img)
+	case 7:
+		img = imaging.Transverse(img)
+	case 8:
+		img = imaging.Rotate90(img)
+	}
+
+	if resizeWidth != 0 || resizeHeight != 0 {
+		img = imaging.Resize(img, resizeWidth, resizeHeight, imaging.CatmullRom)
+	}
 
 	resizeSpan.End()
 
 	// encode image
 	_, encodeSpan := tracer.Start(ctx, "EncodeImage")
 	var buff bytes.Buffer
-	err = webp.Encode(&buff, dst, &webp.Options{Quality: 80})
+	err = webp.Encode(&buff, img, &webp.Options{Quality: 80})
 	if err != nil {
 		err := errors.Wrap(err, "Failed to encode image")
 		span.RecordError(err)
