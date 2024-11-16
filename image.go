@@ -101,6 +101,10 @@ func ImageHandler(c echo.Context) error {
 	ctx, span := tracer.Start(c.Request().Context(), "ImageHandler")
 	defer span.End()
 
+	// setup cors
+	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	c.Response().Header().Set("Access-Control-Allow-Methods", "GET")
+
 	subpath := c.Param("*")
 
 	cacheKeyBytes := sha256.Sum256([]byte(subpath))
