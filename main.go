@@ -1,9 +1,10 @@
 package main
 
 import (
-	"os"
-
+	"context"
+	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -12,6 +13,13 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 )
 
 var denyIps = []string{
@@ -28,6 +36,7 @@ var (
 	client = &http.Client{
 		Timeout: 10 * time.Second,
 	}
+	tracer = otel.Tracer("hyperproxy")
 )
 
 const (
@@ -42,6 +51,22 @@ func main() {
 	e := echo.New()
 	pprof.Register(e)
 	e.Use(middleware.Recover())
+
+	traceEndpoint := os.Getenv("HYPERPROXY_TRACE_ENDPOINT")
+	if traceEndpoint != "" {
+		cleanup, err := setupTraceProvider(traceEndpoint, "hyperproxy", "")
+		if err != nil {
+			panic(err)
+		}
+		defer cleanup()
+
+		skipper := otelecho.WithSkipper(
+			func(c echo.Context) bool {
+				return c.Path() == "/metrics" || c.Path() == "/health"
+			},
+		)
+		e.Use(otelecho.Middleware("hyperproxy", skipper))
+	}
 
 	e.Use(echoprometheus.NewMiddlewareWithConfig(echoprometheus.MiddlewareConfig{
 		Namespace: "hyperproxy",
@@ -86,4 +111,45 @@ func main() {
 	}
 
 	e.Logger.Fatal(e.Start(":" + PORT))
+}
+
+func setupTraceProvider(endpoint string, serviceName string, serviceVersion string) (func(), error) {
+
+	exporter, err := otlptracehttp.New(
+		context.Background(),
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithInsecure(),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	resource := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String(serviceName),
+		semconv.ServiceVersionKey.String(serviceVersion),
+	)
+
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithResource(resource),
+	)
+	otel.SetTracerProvider(tracerProvider)
+
+	propagator := propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	)
+	otel.SetTextMapPropagator(propagator)
+
+	cleanup := func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if err := tracerProvider.Shutdown(ctx); err != nil {
+			fmt.Println(fmt.Sprintf("Failed to shutdown tracer provider: %v", err))
+		}
+	}
+	return cleanup, nil
 }

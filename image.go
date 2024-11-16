@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -9,12 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-
-	"crypto/sha256"
-	"path/filepath"
 
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
@@ -24,9 +23,8 @@ import (
 	_ "image/png"
 
 	"github.com/chai2010/webp"
-
 	"github.com/labstack/echo/v4"
-
+	"github.com/pkg/errors"
 	"golang.org/x/image/draw"
 )
 
@@ -69,8 +67,10 @@ func CleanDiskCache() int64 {
 		return files[i].ModTime().Before(files[j].ModTime())
 	})
 
+	threadhold := 0.8 * MaxCacheSize
+
 	for _, file := range files {
-		if totalSize < MaxCacheSize {
+		if totalSize < int64(threadhold) {
 			break
 		}
 		filePath := filepath.Join(CachePath, file.Name())
@@ -87,6 +87,8 @@ func CleanDiskCache() int64 {
 }
 
 func ImageHandler(c echo.Context) error {
+	ctx, span := tracer.Start(c.Request().Context(), "ImageHandler")
+	defer span.End()
 
 	subpath := c.Param("*")
 
@@ -102,13 +104,17 @@ func ImageHandler(c echo.Context) error {
 
 	splitter := strings.Index(subpath, "/")
 	if splitter == -1 {
-		return c.String(400, "Bad Request")
+		err := errors.New("Failed to split the path")
+		span.RecordError(err)
+		return c.String(400, err.Error())
 	}
 	operator := subpath[:splitter]
 
 	split := strings.Split(operator, "x")
 	if len(split) != 2 {
-		return c.String(400, "Bad Request")
+		err := errors.New("Failed to split the operator")
+		span.RecordError(err)
+		return c.String(400, err.Error())
 	}
 	widthStr := split[0]
 	heightStr := split[1]
@@ -118,7 +124,9 @@ func ImageHandler(c echo.Context) error {
 		var err error
 		width, err = strconv.Atoi(widthStr)
 		if err != nil {
-			return c.String(400, "Bad Request")
+			err := errors.Wrap(err, "Failed to parse width")
+			span.RecordError(err)
+			return c.String(400, err.Error())
 		}
 	}
 
@@ -127,16 +135,15 @@ func ImageHandler(c echo.Context) error {
 		var err error
 		height, err = strconv.Atoi(heightStr)
 		if err != nil {
-			return c.String(400, "Bad Request")
+			err := errors.Wrap(err, "Failed to parse height")
+			span.RecordError(err)
+			return c.String(400, err.Error())
 		}
 	}
 
 	remoteURL := subpath[splitter+1:]
-
 	originalCacheKeyBytes := sha256.Sum256([]byte(remoteURL))
 	originalCacheKey := hex.EncodeToString(originalCacheKeyBytes[:])
-	fmt.Println("originalCacheKey", originalCacheKey)
-
 	originalCachePath := filepath.Join(CachePath, originalCacheKey)
 
 	var reader io.Reader
@@ -145,69 +152,89 @@ func ImageHandler(c echo.Context) error {
 	if _, err := os.Stat(originalCachePath); err == nil {
 		reader, err = os.Open(originalCachePath)
 		if err != nil {
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to open original cache")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 	} else {
 
 		parsedUrl, err := url.Parse(remoteURL)
 		if err != nil {
-			fmt.Println("Error parsing URL: ", err)
-			return invalidURL(c, "Invalid URL", cacheKey)
+			err := errors.Wrap(err, "Failed to parse URL")
+			span.RecordError(err)
+			return c.String(400, err.Error())
 		}
 
 		targetIPs, err := net.LookupIP(parsedUrl.Host)
 		if err != nil {
-			fmt.Println("Error looking up IP: ", err)
-			return invalidURL(c, parsedUrl.Host, cacheKey)
+			err := errors.Wrap(err, "Failed to lookup IP")
+			span.RecordError(err)
+			return c.String(400, err.Error())
 		}
 
 		for _, denyIP := range denyIps {
 			_, ipnet, err := net.ParseCIDR(denyIP)
 			if err != nil {
 				fmt.Println("Error parsing CIDR: ", err)
+				span.RecordError(err)
 				continue
 			}
 
 			for _, targetIP := range targetIPs {
 				if ipnet.Contains(targetIP) {
-					fmt.Println("IP is in deny list: ", targetIP)
-					return invalidURL(c, parsedUrl.Host, cacheKey)
+					err := errors.New("IP is in deny list")
+					span.RecordError(err)
+					return c.String(403, err.Error())
 				}
 			}
 		}
 
+		_, fetchSpan := tracer.Start(ctx, "FetchImage")
+
 		req, err := http.NewRequest("GET", remoteURL, nil)
 		if err != nil {
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to create request")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 		req.Header.Set("User-Agent", useragent)
 		resp, err := client.Do(req)
 
 		if err != nil {
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to fetch image")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 		defer resp.Body.Close()
 
+		fetchSpan.End()
+
 		if resp.StatusCode != 200 {
-			return c.String(resp.StatusCode, "Internal Server Error")
+			err := errors.New("Failed to fetch image")
+			span.RecordError(err)
+			return c.String(resp.StatusCode, err.Error())
 		}
 
 		// check if the image is valid
 		if !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/") {
-			return c.String(400, "Bad Request")
+			err := errors.New("Invalid image")
+			span.RecordError(err)
+			return c.String(400, err.Error())
 		}
 
 		// save the image to cache
 		err = os.MkdirAll(CachePath, 0755)
 		if err != nil {
-			fmt.Println(err)
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to create cache directory")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 
 		cacheFile, err := os.Create(originalCachePath)
 		if err != nil {
-			fmt.Println(err)
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to create cache file")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 		defer cacheFile.Close()
 
@@ -223,12 +250,16 @@ func ImageHandler(c echo.Context) error {
 
 		err = os.MkdirAll(CachePath, 0755)
 		if err != nil {
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to create cache directory")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 
 		cacheFile, err := os.Create(cachePath)
 		if err != nil {
-			return c.String(500, "Internal Server Error")
+			err := errors.Wrap(err, "Failed to create cache file")
+			span.RecordError(err)
+			return c.String(500, err.Error())
 		}
 		defer cacheFile.Close()
 
@@ -264,25 +295,35 @@ func ImageHandler(c echo.Context) error {
 		resizeHeight = originalHeight
 	}
 
+	_, resizeSpan := tracer.Start(ctx, "ResizeImage")
+
 	dst := image.NewRGBA(image.Rect(0, 0, resizeWidth, resizeHeight))
 	draw.NearestNeighbor.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
+
+	resizeSpan.End()
 
 	// encode image
 	var buff bytes.Buffer
 	err = webp.Encode(&buff, dst, &webp.Options{Quality: 80})
 	if err != nil {
-		return c.String(500, "Internal Server Error")
+		err := errors.Wrap(err, "Failed to encode image")
+		span.RecordError(err)
+		return c.String(500, err.Error())
 	}
 
 	// save the image to cache
 	err = os.MkdirAll(CachePath, 0755)
 	if err != nil {
-		return c.String(500, "Internal Server Error")
+		err := errors.Wrap(err, "Failed to create cache directory")
+		span.RecordError(err)
+		return c.String(500, err.Error())
 	}
 
 	err = os.WriteFile(cachePath, buff.Bytes(), 0644)
 	if err != nil {
-		return c.String(500, "Internal Server Error")
+		err := errors.Wrap(err, "Failed to write cache file")
+		span.RecordError(err)
+		return c.String(500, err.Error())
 	}
 
 	// return the image
