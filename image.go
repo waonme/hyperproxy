@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	_ "github.com/kettek/apng"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
 	"image"
@@ -298,7 +299,14 @@ func ImageHandler(c echo.Context) error {
 	buf := new(bytes.Buffer)
 	tee := io.TeeReader(reader, buf)
 	img, format, err := image.Decode(tee)
-	if err != nil || format == "gif" {
+
+	// check if the image is animated
+	isAnimated := false
+	if err == nil {
+		_, isAnimated = img.(*image.Paletted)
+	}
+
+	if err != nil || isAnimated {
 		c.Response().Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400, immutable")
 		return c.Stream(200, contentType, io.MultiReader(buf, reader))
 	}

@@ -6,6 +6,7 @@ require (
 	github.com/bradfitz/gomemcache v0.0.0-20230905024940-24af94b03874
 	github.com/chai2010/webp v1.1.1
 	github.com/disintegration/imaging v1.6.2
+	github.com/kettek/apng v0.0.0-20220823221153-ff692776a607
 	github.com/labstack/echo-contrib v0.17.1
 	github.com/labstack/echo/v4 v4.12.0
 	github.com/pkg/errors v0.9.1
