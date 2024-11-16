@@ -15,12 +15,14 @@ import (
 	"strconv"
 	"strings"
 
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/tiff"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+
+	"go.opentelemetry.io/otel/attribute"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
 
 	"github.com/chai2010/webp"
 	"github.com/labstack/echo/v4"
@@ -34,6 +36,12 @@ const (
 )
 
 func CleanDiskCache() int64 {
+
+	err := os.MkdirAll(CachePath, 0755)
+	if err != nil {
+		err := errors.Wrap(err, "Failed to create cache directory")
+		fmt.Println(err)
+	}
 
 	entries, err := os.ReadDir(CachePath)
 	if err != nil {
@@ -109,6 +117,7 @@ func ImageHandler(c echo.Context) error {
 		return c.String(400, err.Error())
 	}
 	operator := subpath[:splitter]
+	span.SetAttributes(attribute.String("operator", operator))
 
 	split := strings.Split(operator, "x")
 	if len(split) != 2 {
@@ -142,6 +151,7 @@ func ImageHandler(c echo.Context) error {
 	}
 
 	remoteURL := subpath[splitter+1:]
+	span.SetAttributes(attribute.String("remoteURL", remoteURL))
 	originalCacheKeyBytes := sha256.Sum256([]byte(remoteURL))
 	originalCacheKey := hex.EncodeToString(originalCacheKeyBytes[:])
 	originalCachePath := filepath.Join(CachePath, originalCacheKey)
@@ -165,9 +175,16 @@ func ImageHandler(c echo.Context) error {
 			return c.String(400, err.Error())
 		}
 
+		if parsedUrl.Scheme != "http" && parsedUrl.Scheme != "https" {
+			err := errors.New("Invalid URL scheme")
+			span.RecordError(err)
+			return c.String(400, err.Error())
+		}
+
 		targetIPs, err := net.LookupIP(parsedUrl.Host)
 		if err != nil {
 			err := errors.Wrap(err, "Failed to lookup IP")
+			span.SetAttributes(attribute.String("host", parsedUrl.Host))
 			span.RecordError(err)
 			return c.String(400, err.Error())
 		}
