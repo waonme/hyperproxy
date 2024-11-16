@@ -9,7 +9,6 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/labstack/echo-contrib/echoprometheus"
-	"github.com/labstack/echo-contrib/pprof"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus"
@@ -49,7 +48,6 @@ func main() {
 	defer mc.Close()
 
 	e := echo.New()
-	pprof.Register(e)
 	e.Use(middleware.Recover())
 
 	traceEndpoint := os.Getenv("HYPERPROXY_TRACE_ENDPOINT")

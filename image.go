@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,8 @@ const (
 	CachePath    = "/tmp/hyperproxy"
 	MaxCacheSize = 1024 * 1024 * 1024 // 1GB
 )
+
+var reCleanedURL = regexp.MustCompile(`^(https?):/+([^/])`)
 
 func CleanDiskCache() int64 {
 
@@ -151,6 +154,7 @@ func ImageHandler(c echo.Context) error {
 	}
 
 	remoteURL := subpath[splitter+1:]
+	remoteURL = reCleanedURL.ReplaceAllString(remoteURL, "$1://$2")
 	span.SetAttributes(attribute.String("remoteURL", remoteURL))
 	originalCacheKeyBytes := sha256.Sum256([]byte(remoteURL))
 	originalCacheKey := hex.EncodeToString(originalCacheKeyBytes[:])
