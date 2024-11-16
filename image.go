@@ -300,7 +300,7 @@ func ImageHandler(c echo.Context) error {
 	img, format, err := image.Decode(tee)
 	if err != nil || format == "gif" {
 		c.Response().Header().Set("Cache-Control", "public, max-age=86400")
-		return c.Stream(200, contentType, buf)
+		return c.Stream(200, contentType, io.MultiReader(buf, reader))
 	}
 	loadSpan.End()
 
