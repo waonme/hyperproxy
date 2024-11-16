@@ -108,7 +108,7 @@ func ImageHandler(c echo.Context) error {
 	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
 	c.Response().Header().Set("Access-Control-Allow-Methods", "GET")
 
-	subpath := c.Param("*")
+	subpath := strings.TrimPrefix(c.Request().RequestURI, "/image/")
 
 	splitter := strings.Index(subpath, "/")
 	if splitter == -1 {
@@ -236,7 +236,6 @@ func ImageHandler(c echo.Context) error {
 		}
 		req.Header.Set("User-Agent", useragent)
 		resp, err := client.Do(req)
-
 		if err != nil {
 			err := errors.Wrap(err, "Failed to fetch image")
 			span.RecordError(err)
@@ -259,7 +258,9 @@ func ImageHandler(c echo.Context) error {
 		fetchSpan.End()
 
 		if resp.StatusCode != 200 {
-			err := errors.New("Failed to fetch image")
+			err := errors.New("fetch image response code is not 200")
+			span.SetAttributes(attribute.Int("statusCode", resp.StatusCode))
+			span.SetAttributes(attribute.String("body", string(buf)))
 			span.RecordError(err)
 			return c.String(resp.StatusCode, err.Error())
 		}
