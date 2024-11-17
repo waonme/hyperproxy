@@ -22,10 +22,10 @@ import (
 	_ "github.com/kettek/apng"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
 
 	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"

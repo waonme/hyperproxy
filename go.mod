@@ -52,4 +52,4 @@ require (
 	google.golang.org/protobuf v1.35.1 // indirect
 )
 
-replace willnorris.com/go/imageproxy => github.com/totegamma/imageproxy v0.0.0
+replace github.com/chai2010/webp => github.com/totegamma/webp v0.0.0
