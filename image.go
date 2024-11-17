@@ -201,7 +201,13 @@ func ImageHandler(c echo.Context) error {
 			return c.String(400, err.Error())
 		}
 
-		targetIPs, err := net.LookupIP(parsedUrl.Host)
+		targetHost := parsedUrl.Host
+		splitHost, _, err := net.SplitHostPort(parsedUrl.Host)
+		if err == nil {
+			targetHost = splitHost
+		}
+
+		targetIPs, err := net.LookupIP(targetHost)
 		if err != nil {
 			err := errors.Wrap(err, "Failed to lookup IP")
 			span.SetAttributes(attribute.String("host", parsedUrl.Host))

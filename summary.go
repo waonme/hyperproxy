@@ -76,7 +76,13 @@ func SummaryHandler(c echo.Context) error {
 		return invalidURL(c, "Invalid URL", cacheKey)
 	}
 
-	targetIPs, err := net.LookupIP(parsedUrl.Host)
+	targetHost := parsedUrl.Host
+	splitHost, _, err := net.SplitHostPort(parsedUrl.Host)
+	if err == nil {
+		targetHost = splitHost
+	}
+
+	targetIPs, err := net.LookupIP(targetHost)
 	if err != nil {
 		fmt.Println("Error looking up IP: ", err)
 		return invalidURL(c, parsedUrl.Host, cacheKey)
@@ -92,7 +98,7 @@ func SummaryHandler(c echo.Context) error {
 		for _, targetIP := range targetIPs {
 			if ipnet.Contains(targetIP) {
 				fmt.Println("IP is in deny list: ", targetIP)
-				return invalidURL(c, parsedUrl.Host, cacheKey)
+				return invalidURL(c, targetHost, cacheKey)
 			}
 		}
 	}
@@ -105,7 +111,7 @@ func SummaryHandler(c echo.Context) error {
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Println("Error fetching URL: ", err)
-		return invalidURL(c, parsedUrl.Host, cacheKey)
+		return invalidURL(c, targetHost, cacheKey)
 	}
 
 	charset := ""
