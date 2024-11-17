@@ -375,7 +375,9 @@ func ImageHandler(c echo.Context) error {
 		img = imaging.Rotate90(img)
 	}
 
-	if resizeWidth != 0 || resizeHeight != 0 {
+	if (resizeWidth == 0 || resizeWidth == originalWidth) && (resizeHeight == 0 || resizeHeight == originalHeight) {
+		// no need to resize
+	} else {
 		img = imaging.Resize(img, resizeWidth, resizeHeight, imaging.CatmullRom)
 	}
 
