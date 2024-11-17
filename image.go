@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	_ "github.com/jdeng/goheif"
 	_ "github.com/kettek/apng"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
@@ -314,6 +315,9 @@ func ImageHandler(c echo.Context) error {
 	}
 
 	if err != nil || isAnimated {
+		if err != nil {
+			fmt.Printf("Fallback to original image: %s (%s) %s\n", remoteURL, format, err)
+		}
 		c.Response().Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400, immutable")
 		return c.Stream(200, contentType, io.MultiReader(buf, reader))
 	}
