@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,12 +18,12 @@ import (
 	"strings"
 
 	_ "github.com/jdeng/goheif"
-	_ "github.com/kettek/apng"
+	"github.com/kettek/apng"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 	"image"
-	_ "image/gif"
+	"image/gif"
 	_ "image/jpeg"
 
 	"github.com/chai2010/webp"
@@ -287,31 +286,36 @@ func ImageHandler(c echo.Context) error {
 			return c.String(500, err.Error())
 		}
 
-		b, err := httputil.DumpResponse(resp, true)
+		cache, err := os.Create(requestCachePath)
 		if err != nil {
-			err := errors.Wrap(err, "Failed to dump response")
+			err := errors.Wrap(err, "Failed to create cache file")
 			span.RecordError(err)
 			return c.String(500, err.Error())
 		}
-
-		err = os.WriteFile(requestCachePath, b, 0644)
-		if err != nil {
-			err := errors.Wrap(err, "Failed to write cache file")
-			span.RecordError(err)
-			return c.String(500, err.Error())
-		}
+		defer cache.Close()
+		resp.Write(cache)
 	}
 
 	// load image
 	_, loadSpan := tracer.Start(ctx, "LoadImage")
-	buf := new(bytes.Buffer)
-	tee := io.TeeReader(reader, buf)
-	img, format, err := image.Decode(tee)
+	data, err := io.ReadAll(reader)
+	img, format, err := image.Decode(bytes.NewReader(data))
 
 	// check if the image is animated
 	isAnimated := false
 	if err == nil {
-		_, isAnimated = img.(*image.Paletted)
+		switch format {
+		case "gif":
+			gifImg, err := gif.DecodeAll(bytes.NewReader(data))
+			if err == nil && len(gifImg.Image) > 1 {
+				isAnimated = true
+			}
+		case "apng":
+			apngImg, err := apng.DecodeAll(bytes.NewReader(data))
+			if err == nil && len(apngImg.Frames) > 1 {
+				isAnimated = true
+			}
+		}
 	}
 
 	if err != nil || isAnimated {
@@ -319,13 +323,13 @@ func ImageHandler(c echo.Context) error {
 			fmt.Printf("Fallback to original image: %s (%s) %s\n", remoteURL, format, err)
 		}
 		c.Response().Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400, immutable")
-		return c.Stream(200, contentType, io.MultiReader(buf, reader))
+		return c.Stream(200, contentType, bytes.NewReader(data))
 	}
 	loadSpan.End()
 
 	orientation := 1
 	if format == "jpeg" {
-		exifData, err := exif.Decode(buf)
+		exifData, err := exif.Decode(bytes.NewReader(data))
 		if err == nil {
 			exifOrient, err := exifData.Get(exif.Orientation)
 			if err == nil {
