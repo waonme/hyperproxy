@@ -78,6 +78,8 @@ func main() {
 		},
 	}))
 
+	init_resize(512 * 1024 * 1024)
+
 	e.GET("/image/*", ImageHandler)
 	e.GET("/summary", SummaryHandler)
 
