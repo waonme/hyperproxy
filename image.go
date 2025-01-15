@@ -177,7 +177,7 @@ func ImageHandler(c echo.Context) error {
 
 	if !data_cached || !header_cached {
 		fmt.Println("  Fetch Original Image")
-		
+
 		parsedUrl, err := url.Parse(remoteURL)
 		if err != nil {
 			err := errors.Wrap(err, "Failed to parse URL")
@@ -300,14 +300,14 @@ func ImageHandler(c echo.Context) error {
 		prefix = "apng:"
 	}
 
-	if width == 0 && height == 0 {
+	if (width == 0 && height == 0) || (resp.Header.Get("Content-Type") == "image/svg+xml") {
 		fmt.Println("  Returning original image")
 		c.Response().Header().Set("Cache-Control", "public, max-age=86400, s-maxage=86400, immutable")
 		c.Response().Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 		return c.File(originalCachePath + ".data")
 	}
 
-	ok := resize(prefix + originalCachePath + ".data", requestCachePath + ".data", width, height)
+	ok := resize(prefix+originalCachePath+".data", requestCachePath+".data", width, height)
 	if ok != 0 {
 		fmt.Println("  [error] Resize Fail Returning original image")
 		err := errors.New("Failed to resize image")

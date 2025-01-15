@@ -25,15 +25,18 @@ int resize(char* input_filename, char* output_filename, int targetWidth, int tar
         std::list<Magick::Image> frames;
         Magick::readImages(&frames, input_filename);
 
-        std::cout << "    Frames found: " << frames.size() << std::endl;
-
         if (frames.empty()) {
             std::cerr << "    Error: No frames found in the input file." << std::endl;
             return 1;
         }
 
         std::list<Magick::Image> cFrames;
-        Magick::coalesceImages(&cFrames, frames.begin(), frames.end());
+        if (frames.size() > 1) {
+            std::cout << "    Multiple frames detected: " << frames.size() << std::endl;
+            Magick::coalesceImages(&cFrames, frames.begin(), frames.end());
+        } else {
+            cFrames = frames;
+        }
 
         for (auto &frame : cFrames) {
             frame.autoOrient();
@@ -47,8 +50,7 @@ int resize(char* input_filename, char* output_filename, int targetWidth, int tar
             }
 
             frame.resize(Magick::Geometry(targetWidth, targetHeight));
-            frame.quality(80);
-
+            frame.quality(70);
             frame.magick("WEBP");
         }
 

@@ -28,4 +28,3 @@ func resize(input, output string, width, height int) int {
 	cint := C.resize(cInput, cOutput, cWidth, cHeight)
 	return int(cint)
 }
-
