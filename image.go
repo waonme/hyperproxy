@@ -120,7 +120,7 @@ func fetchOriginalImage(remoteURL, filepath string) error {
 }
 
 func ImageHandler(c echo.Context) error {
-	span := tracer.Start(c.Request().Context(), "ImageHandler")
+	_, span := tracer.Start(c.Request().Context(), "ImageHandler")
 	defer span.End()
 
 	// CORS設定
