@@ -19,6 +19,25 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	// 環境変数経由で初期化 (デフォルト85/80)
+	jpegQuality = 85
+	webpQuality = 80
+)
+
+func init() {
+	if val := os.Getenv("JPEG_QUALITY"); val != "" {
+		if q, err := strconv.Atoi(val); err == nil {
+			jpegQuality = q
+		}
+	}
+	if val := os.Getenv("WEBP_QUALITY"); val != "" {
+		if q, err := strconv.Atoi(val); err == nil {
+			webpQuality = q
+		}
+	}
+}
+
 const (
 	CachePath    = "/tmp/hyperproxy"
 	MaxCacheSize = 1024 * 1024 * 1024 // 1GB
@@ -47,11 +66,9 @@ func CleanDiskCache() int64 {
 			fmt.Println(err)
 			continue
 		}
-
 		if info.IsDir() {
 			continue
 		}
-
 		files = append(files, info)
 		totalSize += info.Size()
 	}
@@ -65,30 +82,27 @@ func CleanDiskCache() int64 {
 	})
 
 	threadhold := 0.8 * MaxCacheSize
-
 	for _, file := range files {
 		if totalSize < int64(threadhold) {
 			break
 		}
 		filePath := filepath.Join(CachePath, file.Name())
-		err := os.Remove(filePath)
-		if err != nil {
+		if err := os.Remove(filePath); err != nil {
 			fmt.Println(err)
 			continue
 		}
 		fmt.Println("Evicted: ", filePath)
 		totalSize -= file.Size()
 	}
-
 	return totalSize
 }
 
 func getMimeType(extension string) string {
 	switch extension {
+	case "png", "pngq":
+		return "image/png"
 	case "webp":
 		return "image/webp"
-	case "png":
-		return "image/png"
 	case "jpeg", "jpg":
 		return "image/jpeg"
 	case "gif":
@@ -108,7 +122,6 @@ func fetchOriginalImage(remoteURL, filepath string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Failed to fetch image: %s", resp.Status)
 	}
-
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -119,6 +132,7 @@ func fetchOriginalImage(remoteURL, filepath string) error {
 	return err
 }
 
+// ImageHandler: /image/{operator}/{remoteURL}
 func ImageHandler(c echo.Context) error {
 	_, span := tracer.Start(c.Request().Context(), "ImageHandler")
 	defer span.End()
@@ -133,7 +147,7 @@ func ImageHandler(c echo.Context) error {
 	if splitter == -1 {
 		err := errors.New("Invalid URL format: operator and remote URL must be separated by '/'")
 		span.RecordError(err)
-		return c.String(400, err.Error())
+		return c.String(http.StatusBadRequest, err.Error())
 	}
 	operator := subpath[:splitter]
 	remoteURL := subpath[splitter+1:]
@@ -143,17 +157,17 @@ func ImageHandler(c echo.Context) error {
 	if len(split) != 2 {
 		err := errors.New("Invalid operator format: must be [width]x[height][format]")
 		span.RecordError(err)
-		return c.String(400, err.Error())
+		return c.String(http.StatusBadRequest, err.Error())
 	}
 	widthStr := split[0]
 	heightAndExtStr := split[1]
 
+	// 拡張子判定
 	var (
 		outExtension = ""
 		heightStr    = heightAndExtStr
 	)
-	// サポートされるフォーマット
-	supportedFormats := []string{"webp", "png", "gif", "jpeg", "jpg"}
+	supportedFormats := []string{"webp", "png", "pngq", "gif", "jpeg", "jpg"}
 	for _, ext := range supportedFormats {
 		if strings.HasSuffix(heightAndExtStr, ext) {
 			outExtension = ext
@@ -161,61 +175,57 @@ func ImageHandler(c echo.Context) error {
 			break
 		}
 	}
-
 	if outExtension == "" {
+		// デフォルト
 		outExtension = "webp"
 	}
 
 	width, err := strconv.Atoi(widthStr)
 	if err != nil {
 		span.RecordError(err)
-		return c.String(400, "Invalid width")
+		return c.String(http.StatusBadRequest, "Invalid width")
 	}
-
 	height, err := strconv.Atoi(heightStr)
 	if err != nil {
 		span.RecordError(err)
-		return c.String(400, "Invalid height")
+		return c.String(http.StatusBadRequest, "Invalid height")
 	}
 
+	// URLチェック
 	parsedUrl, err := url.Parse(remoteURL)
 	if err != nil {
 		span.RecordError(err)
-		return c.String(400, "Invalid URL")
+		return c.String(http.StatusBadRequest, "Invalid URL")
 	}
-
 	if parsedUrl.Scheme != "http" && parsedUrl.Scheme != "https" {
 		span.RecordError(errors.New("Invalid URL scheme"))
-		return c.String(400, "Invalid URL scheme")
+		return c.String(http.StatusBadRequest, "Invalid URL scheme")
 	}
 
-	// IP制限
+	// IP制限 (denyIps は main.go で定義済み)
 	targetHost := parsedUrl.Host
 	splitHost, _, err := net.SplitHostPort(parsedUrl.Host)
 	if err == nil {
 		targetHost = splitHost
 	}
-
 	targetIPs, err := net.LookupIP(targetHost)
 	if err != nil {
 		span.RecordError(err)
-		return c.String(400, "Failed to resolve host")
+		return c.String(http.StatusBadRequest, "Failed to resolve host")
 	}
-
 	for _, denyIP := range denyIps {
-		_, ipnet, err := net.ParseCIDR(denyIP)
-		if err != nil {
+		_, ipnet, e2 := net.ParseCIDR(denyIP)
+		if e2 != nil {
 			continue
 		}
-
-		for _, targetIP := range targetIPs {
-			if ipnet.Contains(targetIP) {
-				return c.String(403, "Access denied for this IP")
+		for _, tIP := range targetIPs {
+			if ipnet.Contains(tIP) {
+				return c.String(http.StatusForbidden, "Access denied for this IP")
 			}
 		}
 	}
 
-	// キャッシュキー生成
+	// キャッシュパス生成
 	originalCacheKeyBytes := sha256.Sum256([]byte(remoteURL))
 	originalCacheKey := hex.EncodeToString(originalCacheKeyBytes[:])
 	originalCachePath := filepath.Join(CachePath, originalCacheKey)
@@ -224,38 +234,39 @@ func ImageHandler(c echo.Context) error {
 	requestCacheKey := hex.EncodeToString(requestCacheKeyBytes[:])
 	requestCachePath := filepath.Join(CachePath, requestCacheKey) + "." + outExtension
 
-	// キャッシュチェック
+	// すでにリサイズ後ファイルがあれば返す
 	if _, err := os.Stat(requestCachePath); err == nil {
 		mimeType := getMimeType(outExtension)
 		c.Response().Header().Set("Content-Type", mimeType)
 		return c.File(requestCachePath)
 	}
 
-	// 元画像取得またはキャッシュ
+	// 元画像がなければ取得
 	if _, err := os.Stat(originalCachePath); err != nil {
-		if err := fetchOriginalImage(remoteURL, originalCachePath); err != nil {
-			span.RecordError(err)
-			return c.String(400, "Failed to fetch original image")
+		if ferr := fetchOriginalImage(remoteURL, originalCachePath); ferr != nil {
+			span.RecordError(ferr)
+			return c.String(http.StatusBadRequest, "Failed to fetch original image")
 		}
 	}
 
-	// 特例処理: apngやsvg
+	// 特例処理: apngやsvg, or width=0,height=0
 	prefix := ""
 	if strings.HasSuffix(remoteURL, ".apng") {
 		prefix = "apng:"
 	}
-
 	if strings.HasSuffix(remoteURL, ".svg") || (width == 0 && height == 0) {
-		c.Response().Header().Set("Content-Type", getMimeType(outExtension))
+		mimeType := getMimeType(outExtension)
+		c.Response().Header().Set("Content-Type", mimeType)
 		return c.File(originalCachePath)
 	}
 
-	// リサイズ処理 (外部C++ライブラリを呼び出す)
-	ok := resize(prefix+originalCachePath, requestCachePath, width, height)
-	if ok != 0 {
-		return c.String(500, "Failed to resize image")
+	// リサイズ実行
+	if err := doResize(prefix+originalCachePath, requestCachePath, width, height, outExtension); err != nil {
+		span.RecordError(err)
+		return c.String(http.StatusInternalServerError, err.Error())
 	}
 
+	// 正常終了
 	mimeType := getMimeType(outExtension)
 	c.Response().Header().Set("Content-Type", mimeType)
 	return c.File(requestCachePath)

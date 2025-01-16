@@ -21,6 +21,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 )
 
+// IP制限用
 var denyIps = []string{
 	"127.0.0.0/8",
 	"10.0.0.0/8",
@@ -38,18 +39,17 @@ var (
 	tracer = otel.Tracer("hyperproxy")
 )
 
-const (
-	useragent = "hyperproxy bot"
-)
+const useragent = "hyperproxy bot"
 
 func main() {
-
+	// memcache 初期化
 	mc = memcache.New(os.Getenv("MEMCACHED_HOST"))
 	defer mc.Close()
 
 	e := echo.New()
 	e.Use(middleware.Recover())
 
+	// OpenTelemetry トレース
 	traceEndpoint := os.Getenv("HYPERPROXY_TRACE_ENDPOINT")
 	if traceEndpoint != "" {
 		cleanup, err := setupTraceProvider(traceEndpoint, "hyperproxy", "")
@@ -58,14 +58,14 @@ func main() {
 		}
 		defer cleanup()
 
-		skipper := otelecho.WithSkipper(
-			func(c echo.Context) bool {
-				return c.Path() == "/metrics" || c.Path() == "/health"
-			},
-		)
+		// metrics系エンドポイントはスキップ
+		skipper := otelecho.WithSkipper(func(c echo.Context) bool {
+			return c.Path() == "/metrics" || c.Path() == "/health"
+		})
 		e.Use(otelecho.Middleware("hyperproxy", skipper))
 	}
 
+	// Prometheus メトリクス
 	e.Use(echoprometheus.NewMiddlewareWithConfig(echoprometheus.MiddlewareConfig{
 		Namespace: "hyperproxy",
 		LabelFuncs: map[string]echoprometheus.LabelValueFunc{
@@ -78,17 +78,21 @@ func main() {
 		},
 	}))
 
+	// ImageMagick初期化 (512MB制限例)
 	init_resize(512 * 1024 * 1024)
 
+	// ルーティング
 	e.GET("/image/*", ImageHandler)
-	e.GET("/summary", SummaryHandler)
+	e.GET("/summary", SummaryHandler) // ※ ここでは summary.go がある想定
 
+	// キャッシュサイズメトリクス
 	var currentCacheSizeMetrics = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "hyperproxy_image_cache_size",
 		Help: "Current size of the image cache",
 	})
 	prometheus.MustRegister(currentCacheSizeMetrics)
 
+	// 定期的にキャッシュクリア
 	go func() {
 		totalsize := CleanDiskCache()
 		currentCacheSizeMetrics.Set(float64(totalsize))
@@ -109,18 +113,15 @@ func main() {
 	if PORT == "" {
 		PORT = "8080"
 	}
-
 	e.Logger.Fatal(e.Start(":" + PORT))
 }
 
 func setupTraceProvider(endpoint string, serviceName string, serviceVersion string) (func(), error) {
-
 	exporter, err := otlptracehttp.New(
 		context.Background(),
 		otlptracehttp.WithEndpoint(endpoint),
 		otlptracehttp.WithInsecure(),
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +149,7 @@ func setupTraceProvider(endpoint string, serviceName string, serviceVersion stri
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		if err := tracerProvider.Shutdown(ctx); err != nil {
-			fmt.Println(fmt.Sprintf("Failed to shutdown tracer provider: %v", err))
+			fmt.Printf("Failed to shutdown tracer provider: %v\n", err)
 		}
 	}
 	return cleanup, nil
