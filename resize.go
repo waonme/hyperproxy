@@ -2,6 +2,8 @@ package main
 
 /*
 #cgo pkg-config: Magick++
+#cgo CXXFLAGS: -std=c++11
+#cgo LDFLAGS: -lstdc++
 #include <stdlib.h>
 #include "resize.h"
 */
